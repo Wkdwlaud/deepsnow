@@ -1,0 +1,30 @@
+# Tech Analyst Profile Configuration
+# Model: Uses Sonnet for cost-effective research tasks
+
+model:
+  default: "anthropic/claude-sonnet-4-6"
+  provider: "anthropic"
+  # API key loaded from .env file
+  # api_key: loaded from ANTHROPIC_API_KEY env var
+
+# Toolset restriction: ONLY company-level data tools
+# This enforces physical isolation — tech-analyst CANNOT see market-level data
+platform_toolsets:
+  cli: [investment-company, web, file, skills, todo, memory, delegation]
+
+# Plugin enablement
+plugins:
+  enabled:
+    - investment-research
+
+# Memory configuration
+memory:
+  memory_enabled: true
+  memory_char_limit: 4000
+  user_profile_enabled: false
+
+# Delegation config (for spawning sub-tasks like parallel data fetch)
+delegation:
+  max_concurrent_children: 3
+  max_spawn_depth: 1
+  subagent_auto_approve: true

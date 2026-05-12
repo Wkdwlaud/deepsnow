@@ -1,0 +1,23 @@
+# Environment & secrets
+profiles/*/.env
+plugin/config/settings.yaml
+
+# Hermes runtime data (generated, not source)
+profiles/*/sessions/
+profiles/*/logs/
+profiles/*/home/
+profiles/*/plans/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Data (large, generated)
+*.db
+
+# OS
+.DS_Store
+
+# Reports (output, not source code)
+reports/

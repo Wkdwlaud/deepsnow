@@ -1,0 +1,13 @@
+name: investment-research
+version: 0.1.0
+description: "AI Investment Research Team: financial data, stock pool, valuation tools for multi-agent investment research system"
+author: personal
+kind: standalone
+provides_tools:
+  - fetch_stock_financials
+  - fetch_stock_price
+  - fetch_stock_info
+  - fetch_industry_constituents
+  - fetch_market_index
+  - fetch_macro_indicator
+  - calculate_pe_percentile
