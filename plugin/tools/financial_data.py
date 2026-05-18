@@ -5,6 +5,9 @@ Tools are organized into three categories:
 - COMPANY_TOOLS: Individual stock data (registered in investment-company toolset)
 - MARKET_TOOLS: Market/index/macro data (registered in investment-market toolset)
 - SHARED_TOOLS: Cross-cutting quant data (registered in both toolsets)
+
+IMPORTANT: Hermes dispatches tool handlers as handler(args_dict, **kwargs).
+The first argument is always the full parameters dict, NOT individual params.
 """
 
 import json
@@ -41,9 +44,11 @@ def _ok_response(data: Any) -> str:
 # =============================================================================
 
 
-def fetch_stock_financials_handler(stock_code: str, data_type: str = "metrics", **kwargs) -> str:
+def fetch_stock_financials_handler(args: dict, **kwargs) -> str:
     """Fetch financial data for an A-share stock."""
     import akshare as ak
+    stock_code = args.get("stock_code", "")
+    data_type = args.get("data_type", "metrics")
     _rate_limit()
     try:
         if data_type == "metrics":
@@ -60,19 +65,19 @@ def fetch_stock_financials_handler(stock_code: str, data_type: str = "metrics", 
         if df is None or df.empty:
             return _error_response(f"No data returned for {stock_code}")
 
-        # Data sorted old→new; return most recent 20 periods
         records = df.tail(20).to_dict(orient="records")
         return _ok_response(records)
     except Exception as e:
         return _error_response(str(e), "Check stock code (6 digits, e.g. 002415) or try again later")
 
 
-def fetch_stock_price_handler(stock_code: str, period: str = "daily", days: int = 120, **kwargs) -> str:
+def fetch_stock_price_handler(args: dict, **kwargs) -> str:
     """Fetch historical price data for an A-share stock."""
     import akshare as ak
+    stock_code = args.get("stock_code", "")
+    days = int(args.get("days", 120))
     _rate_limit()
     try:
-        # Determine market prefix: 6xxxxx = Shanghai (sh), others = Shenzhen (sz)
         prefix = "sh" if stock_code.startswith("6") else "sz"
         df = ak.stock_zh_a_daily(symbol=f"{prefix}{stock_code}", adjust="qfq")
         if df is None or df.empty:
@@ -84,14 +89,14 @@ def fetch_stock_price_handler(stock_code: str, period: str = "daily", days: int 
         return _error_response(str(e), "Check stock code format (6 digits) or try again")
 
 
-def fetch_stock_info_handler(stock_code: str, **kwargs) -> str:
-    """Fetch basic information for an A-share stock using financial abstract and price data."""
+def fetch_stock_info_handler(args: dict, **kwargs) -> str:
+    """Fetch basic information for an A-share stock."""
     import akshare as ak
+    stock_code = args.get("stock_code", "")
     _rate_limit()
     try:
         info = {"stock_code": stock_code}
 
-        # Get latest price data
         prefix = "sh" if stock_code.startswith("6") else "sz"
         df_price = ak.stock_zh_a_daily(symbol=f"{prefix}{stock_code}", adjust="qfq")
         if df_price is not None and not df_price.empty:
@@ -101,7 +106,6 @@ def fetch_stock_info_handler(stock_code: str, **kwargs) -> str:
             info["volume"] = int(latest["volume"])
 
         _rate_limit()
-        # Get financial metrics (data sorted old→new, latest is last row)
         df_fin = ak.stock_financial_abstract_ths(symbol=stock_code)
         if df_fin is not None and not df_fin.empty:
             latest_fin = df_fin.iloc[-1]
@@ -118,12 +122,12 @@ def fetch_stock_info_handler(stock_code: str, **kwargs) -> str:
         return _error_response(str(e))
 
 
-def fetch_industry_constituents_handler(industry: str, **kwargs) -> str:
+def fetch_industry_constituents_handler(args: dict, **kwargs) -> str:
     """Fetch list of stocks in a given industry sector."""
     import akshare as ak
+    industry = args.get("industry", "")
     _rate_limit()
     try:
-        # Try eastmoney backend first (most comprehensive)
         try:
             df = ak.stock_board_industry_cons_em(symbol=industry)
             if df is not None and not df.empty:
@@ -134,7 +138,6 @@ def fetch_industry_constituents_handler(industry: str, **kwargs) -> str:
         except Exception:
             pass
 
-        # Fallback: return industry summary from ths
         _rate_limit()
         try:
             df_summary = ak.stock_board_industry_summary_ths()
@@ -142,16 +145,16 @@ def fetch_industry_constituents_handler(industry: str, **kwargs) -> str:
                 match = df_summary[df_summary["板块"].str.contains(industry, na=False)]
                 if not match.empty:
                     records = match.head(5).to_dict(orient="records")
-                    return _ok_response({"note": "Detailed constituents unavailable (network), showing industry summary", "data": records})
+                    return _ok_response({"note": "Detailed constituents unavailable, showing industry summary", "data": records})
         except Exception:
             pass
 
         return _error_response(
-            f"Cannot fetch constituents for '{industry}' (network restriction on data source)",
-            "Use Chinese industry name (e.g. '半导体'). Try searching individual stocks with fetch_stock_info instead."
+            f"Cannot fetch constituents for '{industry}'",
+            "Use Chinese industry name, e.g. '半导体', '白酒', '光伏设备'"
         )
     except Exception as e:
-        return _error_response(str(e), "Use Chinese industry name, e.g. '半导体', '白酒', '光伏设备'")
+        return _error_response(str(e))
 
 
 # =============================================================================
@@ -159,9 +162,11 @@ def fetch_industry_constituents_handler(industry: str, **kwargs) -> str:
 # =============================================================================
 
 
-def fetch_market_index_handler(index_code: str = "000300", days: int = 60, **kwargs) -> str:
-    """Fetch index data (price + valuation). Common indices: 000300 (CSI300), 000001 (SSE Composite), 399006 (ChiNext)."""
+def fetch_market_index_handler(args: dict, **kwargs) -> str:
+    """Fetch index data. Common indices: 000300 (CSI300), 000001 (SSE), 399006 (ChiNext)."""
     import akshare as ak
+    index_code = args.get("index_code", "000300")
+    days = int(args.get("days", 60))
     _rate_limit()
     try:
         df = ak.stock_zh_index_daily(symbol=f"sh{index_code}" if index_code.startswith("0") else f"sz{index_code}")
@@ -171,12 +176,13 @@ def fetch_market_index_handler(index_code: str = "000300", days: int = 60, **kwa
         records = df.tail(days).to_dict(orient="records")
         return _ok_response(records)
     except Exception as e:
-        return _error_response(str(e), "Common indices: 000300 (CSI300), 000001 (SSE), 399006 (ChiNext), 000905 (CSI500)")
+        return _error_response(str(e), "Common indices: 000300 (CSI300), 000001 (SSE), 399006 (ChiNext)")
 
 
-def fetch_macro_indicator_handler(indicator: str, **kwargs) -> str:
+def fetch_macro_indicator_handler(args: dict, **kwargs) -> str:
     """Fetch macro economic indicator. Supported: pmi, cpi, ppi, m2, social_financing."""
     import akshare as ak
+    indicator = args.get("indicator", "")
     _rate_limit()
     try:
         if indicator == "pmi":
@@ -202,28 +208,27 @@ def fetch_macro_indicator_handler(indicator: str, **kwargs) -> str:
 
 
 # =============================================================================
-# SHARED TOOLS (registered in investment-company, also usable by committee via quant-support)
+# SHARED TOOLS (registered in investment-company toolset)
 # =============================================================================
 
 
-def calculate_pe_percentile_handler(stock_code: str, years: int = 10, **kwargs) -> str:
-    """Calculate where current PE sits in N-year historical range for a stock or index."""
+def calculate_pe_percentile_handler(args: dict, **kwargs) -> str:
+    """Calculate where current PE sits in N-year historical range for a stock."""
     import akshare as ak
     import pandas as pd
+    stock_code = args.get("stock_code", "")
+    years = int(args.get("years", 10))
     _rate_limit()
     try:
-        # Get historical price using sina backend
         prefix = "sh" if stock_code.startswith("6") else "sz"
         df = ak.stock_zh_a_daily(symbol=f"{prefix}{stock_code}", adjust="qfq")
         if df is None or df.empty:
             return _error_response(f"No price data for {stock_code}")
 
-        # Get EPS from financial data (sorted old→new, latest is last row)
         _rate_limit()
         try:
             fin = ak.stock_financial_abstract_ths(symbol=stock_code)
             if fin is not None and not fin.empty and "基本每股收益" in fin.columns:
-                # Find the latest row with valid EPS (searching from end)
                 latest_eps = None
                 for i in range(len(fin) - 1, max(len(fin) - 5, -1), -1):
                     val = fin.iloc[i]["基本每股收益"]
@@ -243,7 +248,6 @@ def calculate_pe_percentile_handler(stock_code: str, years: int = 10, **kwargs) 
         if latest_eps <= 0:
             return _error_response(f"EPS is negative ({latest_eps}), PE not meaningful for this stock")
 
-        # Calculate historical PEs using weekly samples
         df["date"] = pd.to_datetime(df["date"])
         cutoff = pd.Timestamp.now() - pd.DateOffset(years=years)
         df_period = df[df["date"] >= cutoff].copy()
@@ -251,7 +255,6 @@ def calculate_pe_percentile_handler(stock_code: str, years: int = 10, **kwargs) 
         if len(df_period) < 50:
             return _error_response(f"Insufficient data: only {len(df_period)} days in {years}-year window")
 
-        # Sample weekly for efficiency
         df_weekly = df_period.resample("W", on="date").last().dropna(subset=["close"])
         df_weekly["pe"] = df_weekly["close"] / latest_eps
         current_pe = df_weekly["pe"].iloc[-1]
@@ -298,12 +301,11 @@ FETCH_STOCK_FINANCIALS_SCHEMA = {
 
 FETCH_STOCK_PRICE_SCHEMA = {
     "name": "fetch_stock_price",
-    "description": "Fetch historical OHLCV price data for an A-share stock. Prices are forward-adjusted (前复权).",
+    "description": "Fetch historical OHLCV price data for an A-share stock. Prices are forward-adjusted.",
     "parameters": {
         "type": "object",
         "properties": {
             "stock_code": {"type": "string", "description": "6-digit A-share stock code"},
-            "period": {"type": "string", "enum": ["daily", "weekly", "monthly"], "description": "Data frequency"},
             "days": {"type": "integer", "description": "Number of recent data points to return (default 120)"},
         },
         "required": ["stock_code"],
@@ -312,7 +314,7 @@ FETCH_STOCK_PRICE_SCHEMA = {
 
 FETCH_STOCK_INFO_SCHEMA = {
     "name": "fetch_stock_info",
-    "description": "Fetch basic info for an A-share stock: company name, industry, total market cap, PE, PB, etc.",
+    "description": "Fetch basic info for an A-share stock: latest price, EPS, revenue, profit growth, etc.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -324,7 +326,7 @@ FETCH_STOCK_INFO_SCHEMA = {
 
 FETCH_INDUSTRY_CONSTITUENTS_SCHEMA = {
     "name": "fetch_industry_constituents",
-    "description": "Fetch list of stocks in a given industry sector (东方财富行业板块). Returns stock codes, names, prices, and market caps.",
+    "description": "Fetch list of stocks in a given industry sector. Returns stock codes, names, prices, and market caps.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -336,11 +338,11 @@ FETCH_INDUSTRY_CONSTITUENTS_SCHEMA = {
 
 FETCH_MARKET_INDEX_SCHEMA = {
     "name": "fetch_market_index",
-    "description": "Fetch index price data. Use for market-level analysis (overall market valuation, trend). NOT for individual stocks.",
+    "description": "Fetch index price data. Use for market-level analysis. NOT for individual stocks.",
     "parameters": {
         "type": "object",
         "properties": {
-            "index_code": {"type": "string", "description": "Index code: '000300' (CSI300), '000001' (SSE Composite), '399006' (ChiNext), '000905' (CSI500), '000688' (STAR50)"},
+            "index_code": {"type": "string", "description": "Index code: '000300' (CSI300), '000001' (SSE Composite), '399006' (ChiNext), '000905' (CSI500)"},
             "days": {"type": "integer", "description": "Number of recent trading days to return (default 60)"},
         },
         "required": ["index_code"],
@@ -361,7 +363,7 @@ FETCH_MACRO_INDICATOR_SCHEMA = {
 
 CALCULATE_PE_PERCENTILE_SCHEMA = {
     "name": "calculate_pe_percentile",
-    "description": "Calculate where a stock's current PE ratio sits in its N-year historical range. Returns percentile (0-100%), with 0% being cheapest historically.",
+    "description": "Calculate where a stock's current PE ratio sits in its N-year historical range. Returns percentile (0-100%).",
     "parameters": {
         "type": "object",
         "properties": {
@@ -375,9 +377,9 @@ CALCULATE_PE_PERCENTILE_SCHEMA = {
 
 # =============================================================================
 # TOOL LISTS FOR REGISTRATION
+# Format: (name, schema, handler, description)
 # =============================================================================
 
-# Format: (name, schema, handler, description)
 COMPANY_TOOLS = [
     ("fetch_stock_financials", FETCH_STOCK_FINANCIALS_SCHEMA, fetch_stock_financials_handler, "Fetch A-share stock financial data"),
     ("fetch_stock_price", FETCH_STOCK_PRICE_SCHEMA, fetch_stock_price_handler, "Fetch historical stock price data"),
