@@ -33,6 +33,7 @@ def register(ctx) -> None:
         POOL_COMPANY_TOOLS,
         POOL_SHARED_TOOLS,
     )
+    from .tools.report import REPORT_TOOLS
 
     # Financial data tools
     for name, schema, handler, description in COMPANY_TOOLS:
@@ -76,6 +77,16 @@ def register(ctx) -> None:
         )
 
     for name, schema, handler, description in POOL_SHARED_TOOLS:
+        ctx.register_tool(
+            name=name,
+            toolset="investment-company",
+            schema=schema,
+            handler=handler,
+            description=description,
+        )
+
+    # Report tools
+    for name, schema, handler, description in REPORT_TOOLS:
         ctx.register_tool(
             name=name,
             toolset="investment-company",
