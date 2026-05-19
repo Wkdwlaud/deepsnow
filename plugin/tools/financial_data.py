@@ -283,6 +283,118 @@ def calculate_pe_percentile_handler(args: dict, **kwargs) -> str:
 
 
 # =============================================================================
+# HK STOCK TOOLS (investment-company toolset)
+# =============================================================================
+
+
+def fetch_hk_stock_price_handler(args: dict, **kwargs) -> str:
+    """Fetch historical price data for a Hong Kong listed stock."""
+    import akshare as ak
+    stock_code = args.get("stock_code", "")
+    days = int(args.get("days", 120))
+    _rate_limit()
+    try:
+        # Try eastmoney backend first, fallback to sina
+        try:
+            df = ak.stock_hk_hist(symbol=stock_code, period="daily", adjust="qfq")
+        except Exception:
+            _rate_limit()
+            df = ak.stock_hk_daily(symbol=stock_code, adjust="qfq")
+        if df is None or df.empty:
+            return _error_response(f"No price data for HK:{stock_code}")
+
+        records = df.tail(days).to_dict(orient="records")
+        return _ok_response(records)
+    except Exception as e:
+        return _error_response(str(e), "Use 5-digit HK stock code, e.g. '00700' for Tencent, '09988' for Alibaba")
+
+
+def fetch_hk_stock_info_handler(args: dict, **kwargs) -> str:
+    """Fetch basic info and financial indicators for a HK stock."""
+    import akshare as ak
+    stock_code = args.get("stock_code", "")
+    _rate_limit()
+    try:
+        info = {"stock_code": stock_code, "market": "HK"}
+
+        # Get latest price (try eastmoney, fallback to sina)
+        try:
+            df_price = ak.stock_hk_hist(symbol=stock_code, period="daily", adjust="qfq")
+            if df_price is not None and not df_price.empty:
+                latest = df_price.iloc[-1]
+                info["latest_price_hkd"] = float(latest["收盘"])
+                info["latest_date"] = str(latest["日期"])
+                info["change_pct"] = float(latest["涨跌幅"])
+                info["volume"] = int(latest["成交量"])
+        except Exception:
+            _rate_limit()
+            try:
+                df_price = ak.stock_hk_daily(symbol=stock_code, adjust="qfq")
+                if df_price is not None and not df_price.empty:
+                    latest = df_price.iloc[-1]
+                    info["latest_price_hkd"] = float(latest["close"])
+                    info["latest_date"] = str(latest["date"])
+                    info["volume"] = int(latest["volume"])
+            except Exception:
+                pass
+
+        # Get financial indicators
+        _rate_limit()
+        try:
+            df_fin = ak.stock_hk_financial_indicator_em(symbol=stock_code)
+            if df_fin is not None and not df_fin.empty:
+                row = df_fin.iloc[0]
+                info["eps"] = str(row.get("基本每股收益(元)", ""))
+                info["nav_per_share"] = str(row.get("每股净资产(元)", ""))
+                info["dividend_per_share_ttm"] = str(row.get("每股股息TTM(港元)", ""))
+                info["dividend_yield_ttm"] = str(row.get("股息率TTM(%)", ""))
+                info["shares_outstanding"] = str(row.get("已发行股本(股)", ""))
+        except Exception:
+            pass
+
+        # Get company profile
+        _rate_limit()
+        try:
+            df_profile = ak.stock_hk_company_profile_em(symbol=stock_code)
+            if df_profile is not None and not df_profile.empty:
+                row = df_profile.iloc[0]
+                info["company_name"] = str(row.get("公司名称", ""))
+                info["industry"] = str(row.get("所属行业", ""))
+                info["chairman"] = str(row.get("董事长", ""))
+                info["employees"] = str(row.get("员工人数", ""))
+        except Exception:
+            pass
+
+        return _ok_response(info)
+    except Exception as e:
+        return _error_response(str(e), "Use 5-digit HK code, e.g. '00700' for Tencent")
+
+
+def fetch_hk_stock_financials_handler(args: dict, **kwargs) -> str:
+    """Fetch annual financial analysis indicators for a HK stock (ROE, margins, growth rates)."""
+    import akshare as ak
+    stock_code = args.get("stock_code", "")
+    _rate_limit()
+    try:
+        df = ak.stock_financial_hk_analysis_indicator_em(symbol=stock_code)
+        if df is None or df.empty:
+            return _error_response(f"No financial data for HK:{stock_code}")
+
+        # Select key columns
+        key_cols = [
+            "REPORT_DATE", "BASIC_EPS", "BPS", "OPERATE_INCOME",
+            "OPERATE_INCOME_YOY", "HOLDER_PROFIT", "HOLDER_PROFIT_YOY",
+            "GROSS_PROFIT_RATIO", "NET_PROFIT_RATIO", "ROE_AVG", "ROA",
+            "DEBT_ASSET_RATIO", "CURRENT_RATIO"
+        ]
+        available_cols = [c for c in key_cols if c in df.columns]
+        records = df[available_cols].to_dict(orient="records")
+        return _ok_response(records)
+    except Exception as e:
+        return _error_response(str(e), "Use 5-digit HK code, e.g. '00700'")
+
+
+# =============================================================================
 # TOOL SCHEMA DEFINITIONS
 # =============================================================================
 
@@ -363,12 +475,49 @@ FETCH_MACRO_INDICATOR_SCHEMA = {
 
 CALCULATE_PE_PERCENTILE_SCHEMA = {
     "name": "calculate_pe_percentile",
-    "description": "Calculate where a stock's current PE ratio sits in its N-year historical range. Returns percentile (0-100%).",
+    "description": "Calculate where a stock's current PE ratio sits in its N-year historical range. Returns percentile (0-100%). A-share only.",
     "parameters": {
         "type": "object",
         "properties": {
             "stock_code": {"type": "string", "description": "6-digit A-share stock code"},
             "years": {"type": "integer", "description": "Historical lookback period in years (default 10)"},
+        },
+        "required": ["stock_code"],
+    },
+}
+
+FETCH_HK_STOCK_PRICE_SCHEMA = {
+    "name": "fetch_hk_stock_price",
+    "description": "Fetch historical daily OHLCV data for a Hong Kong listed stock. Use for HK stocks like Tencent (00700), Alibaba (09988), Meituan (03690).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "stock_code": {"type": "string", "description": "5-digit HK stock code, e.g. '00700' for Tencent, '09988' for Alibaba, '03690' for Meituan"},
+            "days": {"type": "integer", "description": "Number of recent trading days to return (default 120)"},
+        },
+        "required": ["stock_code"],
+    },
+}
+
+FETCH_HK_STOCK_INFO_SCHEMA = {
+    "name": "fetch_hk_stock_info",
+    "description": "Fetch basic info for a HK stock: price, EPS, dividend yield, company name, industry, employees. Use for HK-listed companies.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "stock_code": {"type": "string", "description": "5-digit HK stock code, e.g. '00700' for Tencent"},
+        },
+        "required": ["stock_code"],
+    },
+}
+
+FETCH_HK_STOCK_FINANCIALS_SCHEMA = {
+    "name": "fetch_hk_stock_financials",
+    "description": "Fetch annual financial indicators for a HK stock: EPS, ROE, revenue growth, profit growth, margins, debt ratio. Returns multiple years for trend analysis.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "stock_code": {"type": "string", "description": "5-digit HK stock code, e.g. '00700' for Tencent"},
         },
         "required": ["stock_code"],
     },
@@ -385,6 +534,9 @@ COMPANY_TOOLS = [
     ("fetch_stock_price", FETCH_STOCK_PRICE_SCHEMA, fetch_stock_price_handler, "Fetch historical stock price data"),
     ("fetch_stock_info", FETCH_STOCK_INFO_SCHEMA, fetch_stock_info_handler, "Fetch stock basic information"),
     ("fetch_industry_constituents", FETCH_INDUSTRY_CONSTITUENTS_SCHEMA, fetch_industry_constituents_handler, "List stocks in an industry sector"),
+    ("fetch_hk_stock_price", FETCH_HK_STOCK_PRICE_SCHEMA, fetch_hk_stock_price_handler, "Fetch HK stock historical price data"),
+    ("fetch_hk_stock_info", FETCH_HK_STOCK_INFO_SCHEMA, fetch_hk_stock_info_handler, "Fetch HK stock basic information"),
+    ("fetch_hk_stock_financials", FETCH_HK_STOCK_FINANCIALS_SCHEMA, fetch_hk_stock_financials_handler, "Fetch HK stock annual financial indicators"),
 ]
 
 MARKET_TOOLS = [
