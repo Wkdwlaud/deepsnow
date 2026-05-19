@@ -282,6 +282,81 @@ def calculate_pe_percentile_handler(args: dict, **kwargs) -> str:
         return _error_response(str(e))
 
 
+def calculate_forward_peg_handler(args: dict, **kwargs) -> str:
+    """Calculate Forward PEG using analyst consensus EPS forecasts."""
+    import akshare as ak
+    stock_code = args.get("stock_code", "")
+    _rate_limit()
+    try:
+        # Get consensus EPS forecasts
+        df_forecast = ak.stock_profit_forecast_ths(symbol=stock_code)
+        if df_forecast is None or df_forecast.empty:
+            return _error_response(f"No analyst forecast data for {stock_code}", "This stock may not have enough analyst coverage")
+
+        # Get current price
+        _rate_limit()
+        prefix = "sh" if stock_code.startswith("6") else "sz"
+        df_price = ak.stock_zh_a_daily(symbol=f"{prefix}{stock_code}", adjust="qfq")
+        if df_price is None or df_price.empty:
+            return _error_response(f"No price data for {stock_code}")
+
+        current_price = float(df_price.iloc[-1]["close"])
+
+        # Parse forecast data
+        forecasts = []
+        for _, row in df_forecast.iterrows():
+            forecasts.append({
+                "year": str(row["年度"]),
+                "analyst_count": int(row["预测机构数"]),
+                "eps_min": float(row["最小值"]),
+                "eps_mean": float(row["均值"]),
+                "eps_max": float(row["最大值"]),
+            })
+
+        if len(forecasts) < 2:
+            return _error_response("Need at least 2 years of forecast data to calculate growth rate")
+
+        # Calculate Forward PE (using nearest year consensus EPS)
+        eps_y1 = forecasts[0]["eps_mean"]
+        forward_pe = current_price / eps_y1 if eps_y1 > 0 else None
+
+        # Calculate 3-year EPS CAGR
+        eps_first = forecasts[0]["eps_mean"]
+        eps_last = forecasts[-1]["eps_mean"]
+        n_years = len(forecasts) - 1
+        if eps_first > 0 and eps_last > eps_first:
+            cagr = ((eps_last / eps_first) ** (1 / n_years) - 1) * 100
+        elif eps_first > 0:
+            cagr = ((eps_last / eps_first) ** (1 / n_years) - 1) * 100
+        else:
+            cagr = None
+
+        # Calculate Forward PEG
+        forward_peg = forward_pe / cagr if (forward_pe and cagr and cagr > 0) else None
+
+        result = {
+            "stock_code": stock_code,
+            "current_price": round(current_price, 2),
+            "forward_pe": round(forward_pe, 2) if forward_pe else None,
+            "eps_cagr_pct": round(cagr, 1) if cagr else None,
+            "forward_peg": round(forward_peg, 2) if forward_peg else None,
+            "peg_interpretation": (
+                "Significantly undervalued (PEG < 0.5)" if forward_peg and forward_peg < 0.5
+                else "Attractive (PEG 0.5-0.8)" if forward_peg and forward_peg < 0.8
+                else "Fair value (PEG 0.8-1.0)" if forward_peg and forward_peg < 1.0
+                else "Slightly expensive (PEG 1.0-1.5)" if forward_peg and forward_peg < 1.5
+                else "Expensive (PEG > 1.5)" if forward_peg and forward_peg >= 1.5
+                else "Cannot calculate (negative growth)"
+            ),
+            "forecast_years": len(forecasts),
+            "analyst_count": forecasts[0]["analyst_count"],
+            "forecasts": forecasts,
+        }
+        return _ok_response(result)
+    except Exception as e:
+        return _error_response(str(e))
+
+
 # =============================================================================
 # HK STOCK TOOLS (investment-company toolset)
 # =============================================================================
@@ -523,6 +598,18 @@ FETCH_HK_STOCK_FINANCIALS_SCHEMA = {
     },
 }
 
+CALCULATE_FORWARD_PEG_SCHEMA = {
+    "name": "calculate_forward_peg",
+    "description": "Calculate Forward PEG using analyst consensus EPS forecasts (同花顺一致预期). Returns Forward PE, EPS CAGR, Forward PEG, and full forecast breakdown. A-share only. Essential for growth stock valuation.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "stock_code": {"type": "string", "description": "6-digit A-share stock code"},
+        },
+        "required": ["stock_code"],
+    },
+}
+
 
 # =============================================================================
 # TOOL LISTS FOR REGISTRATION
@@ -534,6 +621,7 @@ COMPANY_TOOLS = [
     ("fetch_stock_price", FETCH_STOCK_PRICE_SCHEMA, fetch_stock_price_handler, "Fetch historical stock price data"),
     ("fetch_stock_info", FETCH_STOCK_INFO_SCHEMA, fetch_stock_info_handler, "Fetch stock basic information"),
     ("fetch_industry_constituents", FETCH_INDUSTRY_CONSTITUENTS_SCHEMA, fetch_industry_constituents_handler, "List stocks in an industry sector"),
+    ("calculate_forward_peg", CALCULATE_FORWARD_PEG_SCHEMA, calculate_forward_peg_handler, "Calculate Forward PEG from analyst consensus"),
     ("fetch_hk_stock_price", FETCH_HK_STOCK_PRICE_SCHEMA, fetch_hk_stock_price_handler, "Fetch HK stock historical price data"),
     ("fetch_hk_stock_info", FETCH_HK_STOCK_INFO_SCHEMA, fetch_hk_stock_info_handler, "Fetch HK stock basic information"),
     ("fetch_hk_stock_financials", FETCH_HK_STOCK_FINANCIALS_SCHEMA, fetch_hk_stock_financials_handler, "Fetch HK stock annual financial indicators"),
