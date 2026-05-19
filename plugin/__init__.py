@@ -29,7 +29,12 @@ def register(ctx) -> None:
         MARKET_TOOLS,
         SHARED_TOOLS,
     )
+    from .tools.stock_pool import (
+        POOL_COMPANY_TOOLS,
+        POOL_SHARED_TOOLS,
+    )
 
+    # Financial data tools
     for name, schema, handler, description in COMPANY_TOOLS:
         ctx.register_tool(
             name=name,
@@ -50,7 +55,6 @@ def register(ctx) -> None:
             description=description,
         )
 
-    # Shared tools registered in BOTH toolsets
     for name, schema, handler, description in SHARED_TOOLS:
         ctx.register_tool(
             name=name,
@@ -58,6 +62,25 @@ def register(ctx) -> None:
             schema=schema,
             handler=handler,
             check_fn=_check_akshare_available,
+            description=description,
+        )
+
+    # Stock pool tools (always available, no akshare dependency)
+    for name, schema, handler, description in POOL_COMPANY_TOOLS:
+        ctx.register_tool(
+            name=name,
+            toolset="investment-company",
+            schema=schema,
+            handler=handler,
+            description=description,
+        )
+
+    for name, schema, handler, description in POOL_SHARED_TOOLS:
+        ctx.register_tool(
+            name=name,
+            toolset="investment-company",
+            schema=schema,
+            handler=handler,
             description=description,
         )
 
