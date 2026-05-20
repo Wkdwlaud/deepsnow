@@ -61,10 +61,73 @@
 
 ### 下一步（Phase 2）
 
-- [ ] Stock Pool SQLite 数据库（独立于 Kanban）
-- [ ] 估值计算工具（PEG、未来市值法）
-- [ ] 报告生成工具
+- [x] Stock Pool SQLite 数据库（独立于 Kanban）
+- [x] 估值计算工具（PEG、未来市值法）
+- [x] 报告生成工具
 - [ ] 完整走通一次研究流程：研究 5-10 只科技股 → GREAT 评分 → 入池
+
+---
+
+## 2026-05-19 — Phase 2 完成：科技组完整模板就绪
+
+### 完成内容
+
+1. **港股工具** (`fetch_hk_stock_price`, `fetch_hk_stock_info`, `fetch_hk_stock_financials`)
+   - 价格用 eastmoney + 新浪双后端 fallback
+   - 财务指标用 `stock_financial_hk_analysis_indicator_em`（9 年历年 ROE/增速）
+   - 端到端验证：腾讯(00700) 研究成功，PEG≈1.05
+
+2. **Forward PEG 工具** (`calculate_forward_peg`)
+   - 使用 `stock_profit_forecast_ths` 获取同花顺一致预期（分析师 EPS 预测）
+   - 自动计算 Forward PE + EPS CAGR + Forward PEG
+   - 验证：海康威视 Forward PEG=1.37，18 家机构覆盖，3 年 CAGR 13.7%
+
+3. **Stock Pool 数据库** (`plugin/db/`)
+   - 4 张表：stocks、great_scores、tracking_log、decision_log
+   - 关键字段变更自动写入 tracking_log（审计日志）
+   - 8 个工具：add/update/get/query/summary/great_score/log/decision_log_add
+   - 验证：腾讯入 watch 池(GREAT 39)，海康入 reserve 池(GREAT 31)
+
+4. **报告工具** (`save_report`, `list_reports`)
+   - 保存到 `~/Documents/investment/reports/<sector>/<type>/YYYY-MM-DD_<code>_<name>.md`
+   - 支持按 sector/type/code 过滤列表
+
+5. **Handler 签名 bug fix**
+   - Hermes 调用约定是 `handler(args_dict, **kwargs)`，第一个参数是完整 dict
+   - 之前用命名参数接收导致类型错误，已全部修正
+
+### 端到端验证结果
+
+完整闭环跑通（hermes -p tech-analyst chat）：
+- 研究海康威视 → 调用 19 次工具 → GREAT 评分 31/50 → 入 reserve 池 → 保存报告
+- 研究腾讯 → 港股工具调用成功 → PE/PEG 计算正确 → 70%→95% 深度区分清晰
+- SOUL.md 约束生效：拒绝判断市场季节，引导回公司研究
+
+### 当前工具清单（共 19 个）
+
+| 类别 | 工具 | toolset |
+|------|------|---------|
+| A股数据 | fetch_stock_financials, fetch_stock_price, fetch_stock_info, fetch_industry_constituents | investment-company |
+| 港股数据 | fetch_hk_stock_price, fetch_hk_stock_info, fetch_hk_stock_financials | investment-company |
+| 市场数据 | fetch_market_index, fetch_macro_indicator | investment-market |
+| 估值 | calculate_pe_percentile, calculate_forward_peg | investment-company |
+| 股票池 | stock_pool_add, stock_pool_update, stock_pool_get, stock_pool_query, stock_pool_summary, stock_pool_great_score, stock_pool_log, decision_log_add | investment-company |
+| 报告 | save_report, list_reports | investment-company |
+
+### 科技组模板能力总结
+
+tech-analyst profile 现在具备完整研究闭环：
+- **获取数据**：A 股 + 港股行情/财务/指标
+- **估值分析**：PE 历史分位 + Forward PEG（一致预期）
+- **框架评分**：GREAT 五维（通过 skill 引导）
+- **持久化**：股票池 DB + 报告文件 + 审计日志
+- **约束**：估值红线 + 物理隔离 + 拒绝越界
+
+### 下一步
+
+- [ ] 用科技组模板横向扩展其他研究组（消费/医药/周期/高股息）
+- [ ] 搭建投委会 profiles（season-judge, coordinator）
+- [ ] 月度工作流手动跑通
 
 ---
 
